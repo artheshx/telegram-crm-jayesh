@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: theme('colors.border.default');
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.border.strong') transparent;
+  }
+
+  body {
+    background-color: theme('colors.bg.primary');
+    color: theme('colors.text.primary');
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: theme('colors.border.strong');
+    border-radius: 3px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-secondary border border-border-subtle rounded-lg;
+  }
+
+  .btn-primary {
+    @apply bg-accent-blue hover:bg-blue-600 text-white font-medium px-4 py-2 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-bg-elevated hover:bg-border-subtle text-text-primary font-medium px-4 py-2 rounded text-sm transition-colors border border-border-default;
+  }
+
+  .btn-danger {
+    @apply bg-transparent hover:bg-red-950 text-accent-red font-medium px-4 py-2 rounded text-sm transition-colors border border-accent-red/30;
+  }
+
+  .input {
+    @apply bg-bg-tertiary border border-border-default text-text-primary rounded px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none focus:border-accent-blue/60 focus:ring-1 focus:ring-accent-blue/20 transition-colors w-full;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .table-row {
+    @apply border-b border-border-subtle last:border-0 hover:bg-bg-tertiary/50 transition-colors;
+  }
+}
