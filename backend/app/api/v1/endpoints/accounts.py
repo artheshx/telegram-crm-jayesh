@@ -8,6 +8,9 @@ from app.services.telegram_service import send_code_request, sign_in_with_code
 from app.services.activity_service import log_activity
 from typing import List, Dict
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -98,7 +101,8 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    logger.exception("Verify OTP failed")
+    raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{account_id}")
