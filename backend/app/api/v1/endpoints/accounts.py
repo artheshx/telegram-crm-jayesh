@@ -59,13 +59,13 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
 
     try:
         session_string, me = await sign_in_with_code(
-            session_data["api_id"],
-            session_data["api_hash"],
-            data.phone_number,
-            data.code,
-            data.phone_code_hash,
-            data.password,
-        )
+    session_data["api_id"],
+    session_data["api_hash"],
+    data.phone_number,
+    data.code,
+    session_data["phone_code_hash"],
+    data.password,
+)
 
         account = Account(
             phone_number=data.phone_number,
