@@ -40,7 +40,7 @@ def start_scraping(data: ScrapingJobCreate, background_tasks: BackgroundTasks, d
 
     log_activity(db, "scrape_started", f"Scraping started for {data.group_url}", "job", job.id)
 
-    background_tasks.add_task(asyncio.run, scrape_group(job.id, db))
+    background_tasks.add_task(scrape_group, job.id, db)
 
     db.refresh(job)
     return job
