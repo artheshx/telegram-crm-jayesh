@@ -101,8 +101,8 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-    logger.exception("Verify OTP failed")
-    raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Verify OTP failed")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{account_id}")
