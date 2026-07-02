@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from app.db.session import get_db
@@ -7,7 +7,6 @@ from app.schemas.schemas import AccountCreate, AccountOut, AccountOTPVerify
 from app.services.telegram_service import send_code_request, sign_in_with_code
 from app.services.activity_service import log_activity
 from typing import List, Dict
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -62,13 +61,13 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
 
     try:
         session_string, me = await sign_in_with_code(
-    session_data["api_id"],
-    session_data["api_hash"],
-    data.phone_number,
-    data.code,
-    session_data["phone_code_hash"],
-    data.password,
-)
+            session_data["api_id"],
+            session_data["api_hash"],
+            data.phone_number,
+            data.code,
+            session_data["phone_code_hash"],
+            data.password,
+        )
 
         account = Account(
             phone_number=data.phone_number,
@@ -128,3 +127,4 @@ def reconnect_account(account_id: int, db: Session = Depends(get_db)):
     db.commit()
     log_activity(db, "account_reconnected", f"Account {account.phone_number} reconnected", "account", account_id)
     return {"message": "Account reconnected"}
+

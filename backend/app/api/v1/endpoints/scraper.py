@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+﻿from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.models import Group, ScrapingJob, JobStatus, Account, ScrapeHistory
@@ -6,7 +6,6 @@ from app.schemas.schemas import ScrapingJobCreate, ScrapingJobOut, ScrapeHistory
 from app.services.telegram_service import scrape_group
 from app.services.activity_service import log_activity
 from typing import List
-import asyncio
 
 router = APIRouter()
 
@@ -40,7 +39,7 @@ def start_scraping(data: ScrapingJobCreate, background_tasks: BackgroundTasks, d
 
     log_activity(db, "scrape_started", f"Scraping started for {data.group_url}", "job", job.id)
 
-    background_tasks.add_task(scrape_group, job.id, db)
+    background_tasks.add_task(scrape_group, job.id)
 
     db.refresh(job)
     return job
@@ -62,3 +61,4 @@ def stop_scraping(job_id: int, db: Session = Depends(get_db)):
 @router.get("/history", response_model=List[ScrapeHistoryOut])
 def get_scrape_history(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
     return db.query(ScrapeHistory).order_by(ScrapeHistory.created_at.desc()).offset(skip).limit(limit).all()
+

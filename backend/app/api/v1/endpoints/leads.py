@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.db.session import get_db
@@ -45,20 +45,6 @@ def count_leads(search: Optional[str] = None, status: Optional[str] = None, db: 
     return {"count": q.count()}
 
 
-@router.patch("/{lead_id}", response_model=LeadOut)
-def update_lead(lead_id: int, data: LeadUpdate, db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    if data.status is not None:
-        lead.status = data.status
-    if data.notes is not None:
-        lead.notes = data.notes
-    db.commit()
-    db.refresh(lead)
-    return lead
-
-
 @router.get("/export/csv")
 def export_leads_csv(status: Optional[str] = None, db: Session = Depends(get_db)):
     q = db.query(Lead)
@@ -82,3 +68,17 @@ def export_leads_csv(status: Optional[str] = None, db: Session = Depends(get_db)
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=leads.csv"},
     )
+
+
+@router.patch("/{lead_id}", response_model=LeadOut)
+def update_lead(lead_id: int, data: LeadUpdate, db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if data.status is not None:
+        lead.status = data.status
+    if data.notes is not None:
+        lead.notes = data.notes
+    db.commit()
+    db.refresh(lead)
+    return lead
