@@ -21,24 +21,37 @@ async def send_code_request(api_id: str, api_hash: str, phone: str):
     return result.phone_code_hash
 
 
-async def sign_in_with_code(api_id: str, api_hash: str, phone: str, code: str, phone_code_hash: str, password: str = None):
-    """Complete sign-in and return session string."""
+async def sign_in_with_code(
+    api_id: str,
+    api_hash: str,
+    phone: str,
+    code: str,
+    phone_code_hash: str,
+    password: str = None,
+):
     client = TelegramClient(StringSession(), int(api_id), api_hash)
-    await client.connect()
-    try:
-        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
-    except Exception as e:
-        if "two-steps" in str(e).lower() or "password" in str(e).lower():
-            if not password:
-                raise ValueError("Two-factor authentication required")
-            await client.sign_in(password=password)
-        else:
-            raise
-    me = await client.get_me()
-    session_string = client.session.save()
-    await client.disconnect()
-    return session_string, me
 
+    try:
+        await client.connect()
+
+        await client.sign_in(
+            phone=phone,
+            code=code,
+            phone_code_hash=phone_code_hash,
+        )
+
+        me = await client.get_me()
+        session_string = client.session.save()
+
+        return session_string, me
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise
+
+    finally:
+        await client.disconnect()
 
 async def scrape_group(job_id: int, db: Session):
     """Main scraping task — runs as background task."""
