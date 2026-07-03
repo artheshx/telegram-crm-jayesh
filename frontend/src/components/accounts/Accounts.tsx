@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, RefreshCw, Users, Phone, Clock } from 'lucide-react'
 import { getAccounts, sendOTP, verifyOTP, deleteAccount, reconnectAccount } from '../../lib/api'
@@ -21,7 +21,7 @@ export function Accounts() {
   const sendOTPMutation = useMutation({
     mutationFn: sendOTP,
     onSuccess: (data) => {
-      setOtpData(prev => ({ ...prev, phone_code_hash: data.phone_code_hash }))
+      setOtpData(prev => ({ ...prev, code: '', phone_code_hash: data.phone_code_hash }))
       setStep('otp')
       toast('OTP sent to your phone', 'success')
     },
@@ -35,12 +35,16 @@ export function Accounts() {
       setShowAdd(false)
       setStep('form')
       setForm({ phone_number: '', api_id: '', api_hash: '' })
+      setOtpData({ code: '', phone_code_hash: '', password: '' })
       toast('Account added successfully', 'success')
     },
     onError: (e: any) => {
       const detail = e.response?.data?.detail || 'Verification failed'
       if (detail.includes('two-factor') || detail.includes('password')) {
-        toast('2FA required — enter your password', 'warning')
+        toast('2FA required - enter your password', 'warning')
+      } else if (detail.toLowerCase().includes('expired')) {
+        setOtpData(prev => ({ ...prev, code: '', phone_code_hash: '' }))
+        toast('OTP expired. Send a new OTP and use the latest code.', 'error')
       } else {
         toast(detail, 'error')
       }
@@ -184,10 +188,12 @@ export function Accounts() {
               <label className="block text-xs text-text-muted mb-1.5">Verification Code</label>
               <input
                 className="input font-mono text-center text-lg tracking-widest"
-                placeholder="12345"
-                maxLength={5}
+                placeholder="123456"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={8}
                 value={otpData.code}
-                onChange={e => setOtpData(p => ({ ...p, code: e.target.value }))}
+                onChange={e => setOtpData(p => ({ ...p, code: e.target.value.replace(/\s/g, '') }))}
               />
             </div>
             <div>
@@ -203,13 +209,20 @@ export function Accounts() {
             <div className="flex gap-2 pt-2">
               <button onClick={() => setStep('form')} className="btn-secondary flex-1">Back</button>
               <button
+                onClick={() => sendOTPMutation.mutate(form)}
+                disabled={sendOTPMutation.isPending}
+                className="btn-secondary flex-1"
+              >
+                {sendOTPMutation.isPending ? 'Sending...' : 'Resend OTP'}
+              </button>
+              <button
                 onClick={() => verifyMutation.mutate({
                   phone_number: form.phone_number,
-                  code: otpData.code,
+                  code: otpData.code.trim(),
                   phone_code_hash: otpData.phone_code_hash,
                   password: otpData.password || undefined,
                 })}
-                disabled={verifyMutation.isPending || !otpData.code}
+                disabled={verifyMutation.isPending || !otpData.code || !otpData.phone_code_hash}
                 className="btn-primary flex-1"
               >
                 {verifyMutation.isPending ? 'Verifying...' : 'Verify & Add'}
@@ -235,3 +248,6 @@ export function Accounts() {
     </div>
   )
 }
+
+
+
