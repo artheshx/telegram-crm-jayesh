@@ -1,7 +1,12 @@
 ﻿import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import FloodWaitError, SessionPasswordNeededError
+from telethon.errors import (
+    FloodWaitError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    SessionPasswordNeededError,
+)
 from telethon.tl.functions.channels import GetFullChannelRequest
 from app.db.session import SessionLocal
 from app.models.models import Account, Group, Lead, ScrapingJob, ScrapeHistory, JobStatus, AccountStatus, LeadStatus
@@ -42,6 +47,10 @@ async def sign_in_with_code(
                 code=code,
                 phone_code_hash=phone_code_hash,
             )
+        except PhoneCodeExpiredError:
+            raise ValueError("OTP expired. Please request a new code.")
+        except PhoneCodeInvalidError:
+            raise ValueError("Invalid OTP. Please check the code and try again.")
         except SessionPasswordNeededError:
             if not password:
                 raise ValueError("Two-factor authentication password is required")

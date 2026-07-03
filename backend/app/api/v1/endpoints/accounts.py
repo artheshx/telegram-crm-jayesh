@@ -98,7 +98,10 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
         return account
 
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        detail = str(e)
+        if "expired" in detail.lower():
+            otp_sessions.pop(data.phone_number, None)
+        raise HTTPException(status_code=422, detail=detail)
     except Exception as e:
         logger.exception("Verify OTP failed")
         raise HTTPException(status_code=400, detail=str(e))
