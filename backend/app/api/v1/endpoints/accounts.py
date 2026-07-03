@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Temp store for OTP sessions
-otp_sessions: Dict[str, str] = {}
+# Temp store for OTP login sessions
+otp_sessions: Dict[str, dict] = {}
 
 
 @router.get("/", response_model=List[AccountOut])
@@ -29,7 +29,7 @@ async def send_otp(data: AccountCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
     try:
-        phone_code_hash = await send_code_request(
+        otp_data = await send_code_request(
             data.api_id,
             data.api_hash,
             data.phone_number
@@ -38,14 +38,16 @@ async def send_otp(data: AccountCreate, db: Session = Depends(get_db)):
         otp_sessions[data.phone_number] = {
             "api_id": data.api_id,
             "api_hash": data.api_hash,
-            "phone_code_hash": phone_code_hash,
+            "phone_code_hash": otp_data["phone_code_hash"],
+            "login_session_string": otp_data["login_session_string"],
+            "created_at": datetime.now(timezone.utc),
         }
 
         log_activity(db, "otp_sent", f"OTP sent to {data.phone_number}")
 
         return {
             "message": "OTP sent",
-            "phone_code_hash": phone_code_hash
+            "phone_code_hash": otp_data["phone_code_hash"]
         }
 
     except Exception as e:
@@ -67,6 +69,7 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
             data.code,
             session_data["phone_code_hash"],
             data.password,
+            session_data["login_session_string"],
         )
 
         account = Account(
@@ -130,4 +133,6 @@ def reconnect_account(account_id: int, db: Session = Depends(get_db)):
     db.commit()
     log_activity(db, "account_reconnected", f"Account {account.phone_number} reconnected", "account", account_id)
     return {"message": "Account reconnected"}
+
+
 

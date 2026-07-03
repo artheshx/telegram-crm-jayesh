@@ -1,4 +1,5 @@
 ﻿import asyncio
+import re
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import (
@@ -23,7 +24,10 @@ async def send_code_request(api_id: str, api_hash: str, phone: str):
     try:
         await client.connect()
         result = await client.send_code_request(phone)
-        return result.phone_code_hash
+        return {
+            "phone_code_hash": result.phone_code_hash,
+            "login_session_string": client.session.save(),
+        }
     finally:
         await client.disconnect()
 
@@ -35,8 +39,10 @@ async def sign_in_with_code(
     code: str,
     phone_code_hash: str,
     password: str = None,
+    login_session_string: str = None,
 ):
-    client = TelegramClient(StringSession(), int(api_id), api_hash)
+    code = re.sub(r"\s+", "", code or "")
+    client = TelegramClient(StringSession(login_session_string), int(api_id), api_hash)
 
     try:
         await client.connect()
@@ -201,3 +207,8 @@ async def scrape_group(job_id: int):
         if client:
             await client.disconnect()
         db.close()
+
+
+
+
+
