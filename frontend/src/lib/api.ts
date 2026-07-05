@@ -75,6 +75,11 @@ export const getLeads = (params?: {
   limit?: number
 }) => api.get('/leads/', { params }).then((r) => r.data)
 
+export const getLeadCount = (params?: {
+  search?: string
+  status?: string
+}) => api.get('/leads/count', { params }).then((r) => r.data)
+
 export const updateLead = (
   id: number,
   data: {
@@ -89,6 +94,32 @@ export const exportLeadsCSV = () =>
       responseType: 'blob',
     })
     .then((r) => r.data)
+
+// Campaigns
+export const getCampaigns = () =>
+  api.get('/campaigns/').then((r) => r.data)
+
+export const createCampaign = (data: {
+  name: string
+  mode: 'direct_add' | 'message' | 'invite_link'
+  target_url?: string
+  message_template?: string
+  lead_status_filter?: string
+  source_group_filter?: string
+  account_ids: number[]
+  delay_seconds: number
+  follow_up_after_hours: number
+  limit?: number
+}) => api.post('/campaigns/', data).then((r) => r.data)
+
+export const stopCampaign = (id: number) =>
+  api.post(`/campaigns/${id}/stop`).then((r) => r.data)
+
+export const getCampaignRecipients = (id: number, params?: {
+  status?: string
+  skip?: number
+  limit?: number
+}) => api.get(`/campaigns/${id}/recipients`, { params }).then((r) => r.data)
 
 // Logs
 export const getLogs = (level?: string) =>

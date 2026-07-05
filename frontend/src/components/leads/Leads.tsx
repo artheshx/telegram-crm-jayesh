@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Database, Search, Download, X, Edit2, Check } from 'lucide-react'
-import { getLeads, updateLead, exportLeadsCSV } from '../../lib/api'
+import { ChevronLeft, ChevronRight, Database, Search, Download, X, Edit2, Check } from 'lucide-react'
+import { getLeadCount, getLeads, updateLead, exportLeadsCSV } from '../../lib/api'
 import { Lead } from '../../types'
 import { PageHeader, StatusBadge, Table, Th, Td, EmptyState, Skeleton } from '../ui'
 import { useToast } from '../../lib/toast'
 import { formatDistanceToNow } from 'date-fns'
 
-const STATUSES = ['new', 'contacted', 'replied', 'closed']
+const STATUSES = ['new', 'contacted', 'good_lead', 'follow_up', 'failed', 'closed']
 
 export function Leads() {
   const qc = useQueryClient()
@@ -17,11 +17,24 @@ export function Leads() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editNotes, setEditNotes] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(100)
 
   const { data: leads, isLoading } = useQuery({
-    queryKey: ['leads', debouncedSearch, statusFilter],
-    queryFn: () => getLeads({ search: debouncedSearch || undefined, status: statusFilter || undefined, limit: 100 }),
+    queryKey: ['leads', debouncedSearch, statusFilter, page, pageSize],
+    queryFn: () => getLeads({
+      search: debouncedSearch || undefined,
+      status: statusFilter || undefined,
+      skip: (page - 1) * pageSize,
+      limit: pageSize,
+    }),
   })
+  const { data: countData } = useQuery({
+    queryKey: ['leads-count', debouncedSearch, statusFilter],
+    queryFn: () => getLeadCount({ search: debouncedSearch || undefined, status: statusFilter || undefined }),
+  })
+  const totalLeads = countData?.count || 0
+  const totalPages = Math.max(Math.ceil(totalLeads / pageSize), 1)
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: any }) => updateLead(id, data),
@@ -31,6 +44,7 @@ export function Leads() {
 
   const handleSearch = (val: string) => {
     setSearch(val)
+    setPage(1)
     clearTimeout((window as any)._searchTimeout)
     ;(window as any)._searchTimeout = setTimeout(() => setDebouncedSearch(val), 300)
   }
@@ -50,7 +64,7 @@ export function Leads() {
     <div>
       <PageHeader
         title="Lead Database"
-        subtitle={`${leads?.length || 0} leads`}
+        subtitle={`${totalLeads} leads`}
         actions={
           <button onClick={handleExport} className="btn-secondary flex items-center gap-2">
             <Download size={14} /> Export CSV
@@ -59,8 +73,8 @@ export function Leads() {
       />
 
       {/* Filters */}
-      <div className="flex gap-3 mb-5">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-col gap-3 mb-5 sm:flex-row">
+        <div className="relative flex-1 sm:max-w-xs">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             className="input pl-8"
@@ -74,9 +88,12 @@ export function Leads() {
             </button>
           )}
         </div>
-        <select className="input w-40" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+        <select className="input sm:w-44" value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }}>
           <option value="">All Statuses</option>
-          {STATUSES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+          {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
+        </select>
+        <select className="input sm:w-32" value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}>
+          {[50, 100, 250, 500].map(size => <option key={size} value={size}>{size} / page</option>)}
         </select>
       </div>
 
@@ -91,6 +108,7 @@ export function Leads() {
           />
         </div>
       ) : (
+        <>
         <Table>
           <thead>
             <tr>
@@ -125,7 +143,7 @@ export function Leads() {
                     onChange={e => updateMutation.mutate({ id: lead.id, data: { status: e.target.value } })}
                   >
                     {STATUSES.map(s => (
-                      <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                      <option key={s} value={s}>{s.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
                     ))}
                   </select>
                 </Td>
@@ -169,6 +187,26 @@ export function Leads() {
             ))}
           </tbody>
         </Table>
+        <div className="mt-4 flex flex-col gap-3 text-sm text-text-secondary sm:flex-row sm:items-center sm:justify-between">
+          <span>Page {page} of {totalPages}</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+            >
+              <ChevronLeft size={14} /> Previous
+            </button>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="btn-secondary flex items-center gap-2 disabled:opacity-50"
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+        </>
       )}
     </div>
   )

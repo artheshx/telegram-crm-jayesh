@@ -7,6 +7,11 @@ export interface Account {
   last_active?: string
   last_login?: string
   is_active: boolean
+  hourly_message_limit?: number
+  daily_message_limit?: number
+  daily_invite_limit?: number
+  messages_sent_today?: number
+  invites_sent_today?: number
   created_at: string
 }
 
@@ -46,9 +51,46 @@ export interface Lead {
   username?: string
   phone?: string
   source_group_name?: string
-  status: 'new' | 'contacted' | 'replied' | 'closed'
+  status: 'new' | 'contacted' | 'replied' | 'good_lead' | 'follow_up' | 'failed' | 'closed'
   notes?: string
   import_date: string
+}
+
+export interface Campaign {
+  id: number
+  name: string
+  mode: 'direct_add' | 'message' | 'invite_link'
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped'
+  target_url?: string
+  message_template?: string
+  lead_status_filter?: string
+  source_group_filter?: string
+  account_ids?: string
+  delay_seconds: number
+  follow_up_after_hours: number
+  total_recipients: number
+  processed_count: number
+  success_count: number
+  failed_count: number
+  error_message?: string
+  started_at?: string
+  completed_at?: string
+  created_at: string
+}
+
+export interface CampaignRecipient {
+  id: number
+  campaign_id: number
+  lead_id: number
+  account_id?: number
+  status: 'queued' | 'processing' | 'messaged' | 'invited' | 'replied' | 'follow_up' | 'failed' | 'skipped'
+  message_text?: string
+  error_message?: string
+  attempted_at?: string
+  completed_at?: string
+  reply_detected_at?: string
+  lead?: Lead
+  account?: Account
 }
 
 export interface ActivityLog {

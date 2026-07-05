@@ -4,7 +4,8 @@ import clsx from 'clsx'
 // Status badge
 type StatusVariant = 'online' | 'offline' | 'flood_wait' | 'unauthorized' |
   'running' | 'queued' | 'completed' | 'failed' | 'stopped' |
-  'new' | 'contacted' | 'replied' | 'closed' | 'info' | 'error' | 'warning'
+  'new' | 'contacted' | 'replied' | 'good_lead' | 'follow_up' | 'closed' |
+  'processing' | 'messaged' | 'invited' | 'skipped' | 'info' | 'error' | 'warning'
 
 const statusConfig: Record<StatusVariant, { label: string; cls: string; dot?: string }> = {
   online: { label: 'Online', cls: 'bg-green-950 text-green-400 border border-green-800/40', dot: 'bg-green-400' },
@@ -19,7 +20,13 @@ const statusConfig: Record<StatusVariant, { label: string; cls: string; dot?: st
   new: { label: 'New', cls: 'bg-blue-950 text-blue-400 border border-blue-800/40' },
   contacted: { label: 'Contacted', cls: 'bg-purple-950 text-purple-400 border border-purple-800/40' },
   replied: { label: 'Replied', cls: 'bg-green-950 text-green-400 border border-green-800/40' },
+  good_lead: { label: 'Good Lead', cls: 'bg-green-950 text-green-400 border border-green-800/40' },
+  follow_up: { label: 'Follow Up', cls: 'bg-yellow-950 text-yellow-400 border border-yellow-800/40' },
   closed: { label: 'Closed', cls: 'bg-bg-elevated text-text-muted border border-border-default' },
+  processing: { label: 'Processing', cls: 'bg-blue-950 text-blue-400 border border-blue-800/40', dot: 'bg-blue-400' },
+  messaged: { label: 'Messaged', cls: 'bg-purple-950 text-purple-400 border border-purple-800/40' },
+  invited: { label: 'Invited', cls: 'bg-green-950 text-green-400 border border-green-800/40' },
+  skipped: { label: 'Skipped', cls: 'bg-bg-elevated text-text-muted border border-border-default' },
   info: { label: 'Info', cls: 'bg-blue-950/40 text-blue-400' },
   error: { label: 'Error', cls: 'bg-red-950/40 text-red-400' },
   warning: { label: 'Warning', cls: 'bg-yellow-950/40 text-yellow-400' },
@@ -50,12 +57,12 @@ export function ProgressBar({ value, className }: { value: number; className?: s
 // Page header
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between mb-8">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-6 sm:mb-8">
       <div>
         <h1 className="text-xl font-semibold text-text-primary">{title}</h1>
         {subtitle && <p className="text-sm text-text-secondary mt-0.5">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   )
 }
@@ -111,7 +118,7 @@ export function Modal({ open, onClose, title, children }: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-bg-secondary border border-border-default rounded-xl shadow-elevated w-full max-w-md mx-4 p-6">
+      <div className="relative bg-bg-secondary border border-border-default rounded-xl shadow-elevated w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto p-6">
         <h2 className="text-base font-semibold text-text-primary mb-5">{title}</h2>
         {children}
       </div>
@@ -122,8 +129,8 @@ export function Modal({ open, onClose, title, children }: {
 // Table components
 export function Table({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={clsx('card overflow-hidden', className)}>
-      <table className="w-full">{children}</table>
+    <div className={clsx('card overflow-x-auto', className)}>
+      <table className="w-full min-w-[760px]">{children}</table>
     </div>
   )
 }

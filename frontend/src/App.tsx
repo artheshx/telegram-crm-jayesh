@@ -5,6 +5,7 @@ import { Accounts } from './components/accounts/Accounts'
 import { Groups } from './components/dashboard/Groups'
 import { Scraper } from './components/scraper/Scraper'
 import { Leads } from './components/leads/Leads'
+import { Campaigns } from './components/campaigns/Campaigns'
 import { Jobs } from './components/jobs/Jobs'
 import { Logs } from './components/logs/Logs'
 import { Settings } from './components/dashboard/Settings'
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/groups" element={<Groups />} />
           <Route path="/scraper" element={<Scraper />} />
           <Route path="/leads" element={<Leads />} />
+          <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/logs" element={<Logs />} />
           <Route path="/settings" element={<Settings />} />
