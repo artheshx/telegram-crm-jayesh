@@ -1,7 +1,14 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-from app.models.models import AccountStatus, JobStatus, LeadStatus
+from app.models.models import (
+    AccountStatus,
+    CampaignMode,
+    CampaignStatus,
+    JobStatus,
+    LeadStatus,
+    RecipientStatus,
+)
 
 
 # Account Schemas
@@ -31,6 +38,11 @@ class AccountOut(BaseModel):
     last_active: Optional[datetime]
     last_login: Optional[datetime]
     is_active: bool
+    hourly_message_limit: Optional[int] = 20
+    daily_message_limit: Optional[int] = 100
+    daily_invite_limit: Optional[int] = 40
+    messages_sent_today: Optional[int] = 0
+    invites_sent_today: Optional[int] = 0
     created_at: datetime
 
     class Config:
@@ -99,6 +111,63 @@ class LeadOut(BaseModel):
     status: LeadStatus
     notes: Optional[str]
     import_date: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Campaign Schemas
+class CampaignCreate(BaseModel):
+    name: str
+    mode: CampaignMode = CampaignMode.DIRECT_ADD
+    target_url: Optional[str] = None
+    message_template: Optional[str] = None
+    lead_status_filter: Optional[str] = None
+    source_group_filter: Optional[str] = None
+    account_ids: List[int]
+    delay_seconds: int = 15
+    follow_up_after_hours: int = 24
+    limit: Optional[int] = None
+
+
+class CampaignRecipientOut(BaseModel):
+    id: int
+    campaign_id: int
+    lead_id: int
+    account_id: Optional[int]
+    status: RecipientStatus
+    message_text: Optional[str]
+    error_message: Optional[str]
+    attempted_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    reply_detected_at: Optional[datetime]
+    lead: Optional[LeadOut] = None
+    account: Optional[AccountOut] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CampaignOut(BaseModel):
+    id: int
+    name: str
+    mode: CampaignMode
+    status: CampaignStatus
+    target_url: Optional[str]
+    message_template: Optional[str]
+    lead_status_filter: Optional[str]
+    source_group_filter: Optional[str]
+    account_ids: Optional[str]
+    delay_seconds: int
+    follow_up_after_hours: int
+    total_recipients: int
+    processed_count: int
+    success_count: int
+    failed_count: int
+    error_message: Optional[str]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    created_at: datetime
 
     class Config:
         from_attributes = True

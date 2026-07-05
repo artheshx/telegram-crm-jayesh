@@ -9,13 +9,302 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.channels import InviteToChannelRequest
 from app.db.session import SessionLocal
-from app.models.models import Account, Group, Lead, ScrapingJob, ScrapeHistory, JobStatus, AccountStatus, LeadStatus
+from app.models.models import (
+    Account,
+    Campaign,
+    CampaignMode,
+    CampaignRecipient,
+    CampaignStatus,
+    Group,
+    Lead,
+    LeadStatus,
+    RecipientStatus,
+    ScrapeHistory,
+    ScrapingJob,
+    JobStatus,
+    AccountStatus,
+)
 from app.services.activity_service import log_activity
 from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _render_message(template: str, lead: Lead, target_url: str = None) -> str:
+    text = template or ""
+    replacements = {
+        "{name}": lead.name or "",
+        "{username}": f"@{lead.username}" if lead.username else "",
+        "{phone}": lead.phone or "",
+        "{target_url}": target_url or "",
+    }
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    return text.strip()
+
+
+def _account_ids(campaign: Campaign) -> list[int]:
+    return [int(account_id) for account_id in (campaign.account_ids or "").split(",") if account_id.strip()]
+
+
+def _reset_account_counters_if_needed(account: Account):
+    now = datetime.now(timezone.utc)
+    if not account.counters_reset_at or account.counters_reset_at.date() != now.date():
+        account.messages_sent_today = 0
+        account.invites_sent_today = 0
+        account.counters_reset_at = now
+
+
+def _select_account(db, account_ids: list[int], mode: CampaignMode):
+    accounts = (
+        db.query(Account)
+        .filter(Account.id.in_(account_ids), Account.is_active == True, Account.status == AccountStatus.ONLINE)
+        .order_by(Account.last_active.asc().nullsfirst(), Account.id.asc())
+        .all()
+    )
+    for account in accounts:
+        _reset_account_counters_if_needed(account)
+        if mode == CampaignMode.DIRECT_ADD:
+            if (account.invites_sent_today or 0) < (account.daily_invite_limit or 40):
+                return account
+        elif (account.messages_sent_today or 0) < (account.daily_message_limit or 100):
+            return account
+    return None
+
+
+async def _resolve_lead_entity(client: TelegramClient, lead: Lead):
+    if lead.username:
+        return await client.get_entity(lead.username)
+    return await client.get_entity(int(lead.telegram_user_id))
+
+
+async def run_campaign(campaign_id: int):
+    db = SessionLocal()
+    clients = {}
+
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if not campaign:
+            return
+
+        campaign.status = CampaignStatus.RUNNING
+        campaign.started_at = datetime.now(timezone.utc)
+        db.commit()
+
+        account_ids = _account_ids(campaign)
+        target_entity_cache = {}
+
+        while True:
+            db.refresh(campaign)
+            if campaign.status == CampaignStatus.STOPPED:
+                break
+
+            recipient = (
+                db.query(CampaignRecipient)
+                .filter(
+                    CampaignRecipient.campaign_id == campaign.id,
+                    CampaignRecipient.status == RecipientStatus.QUEUED,
+                )
+                .order_by(CampaignRecipient.id.asc())
+                .first()
+            )
+            if not recipient:
+                break
+
+            lead = db.query(Lead).filter(Lead.id == recipient.lead_id).first()
+            if not lead:
+                recipient.status = RecipientStatus.SKIPPED
+                recipient.error_message = "Lead not found"
+                campaign.processed_count += 1
+                db.commit()
+                continue
+
+            account = _select_account(db, account_ids, campaign.mode)
+            if not account:
+                campaign.status = CampaignStatus.FAILED
+                campaign.error_message = "No online account is available below its configured threshold"
+                db.commit()
+                break
+
+            recipient.account_id = account.id
+            recipient.status = RecipientStatus.PROCESSING
+            recipient.attempted_at = datetime.now(timezone.utc)
+            db.commit()
+
+            client = clients.get(account.id)
+            if not client:
+                client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
+                await client.connect()
+                if not await client.is_user_authorized():
+                    account.status = AccountStatus.UNAUTHORIZED
+                    db.commit()
+                    raise Exception(f"Account {account.phone_number} is not authorized")
+                clients[account.id] = client
+
+            try:
+                if campaign.mode == CampaignMode.DIRECT_ADD:
+                    if not campaign.target_url:
+                        raise ValueError("Target channel or group URL is required")
+                    target = target_entity_cache.get(account.id)
+                    if not target:
+                        target = await client.get_entity(campaign.target_url)
+                        target_entity_cache[account.id] = target
+                    user_entity = await _resolve_lead_entity(client, lead)
+                    await client(InviteToChannelRequest(target, [user_entity]))
+                    recipient.status = RecipientStatus.INVITED
+                    lead.status = LeadStatus.CONTACTED
+                    account.invites_sent_today = (account.invites_sent_today or 0) + 1
+                    campaign.success_count += 1
+
+                else:
+                    message = _render_message(campaign.message_template, lead, campaign.target_url)
+                    if campaign.mode == CampaignMode.INVITE_LINK and campaign.target_url and campaign.target_url not in message:
+                        message = f"{message}\n\n{campaign.target_url}".strip()
+                    if not message:
+                        raise ValueError("Message text is required")
+                    user_entity = await _resolve_lead_entity(client, lead)
+                    sent = await client.send_message(user_entity, message)
+                    recipient.status = RecipientStatus.MESSAGED
+                    recipient.message_text = message
+                    recipient.telegram_message_id = str(getattr(sent, "id", ""))
+                    lead.status = LeadStatus.CONTACTED
+                    account.messages_sent_today = (account.messages_sent_today or 0) + 1
+                    campaign.success_count += 1
+
+                recipient.completed_at = datetime.now(timezone.utc)
+                account.last_active = datetime.now(timezone.utc)
+
+            except FloodWaitError as e:
+                account.status = AccountStatus.FLOOD_WAIT
+                recipient.status = RecipientStatus.FAILED
+                recipient.error_message = f"Flood wait: {e.seconds}s"
+                recipient.completed_at = datetime.now(timezone.utc)
+                campaign.failed_count += 1
+                log_activity(db, "campaign_flood_wait", f"Flood wait on {account.phone_number}: {e.seconds}s", "account", account.id, level="error")
+            except Exception as e:
+                recipient.status = RecipientStatus.FAILED
+                recipient.error_message = str(e)
+                recipient.completed_at = datetime.now(timezone.utc)
+                lead.status = LeadStatus.FAILED
+                campaign.failed_count += 1
+
+            campaign.processed_count += 1
+            db.commit()
+            await asyncio.sleep(max(campaign.delay_seconds or 0, 0))
+
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign and campaign.status not in (CampaignStatus.FAILED, CampaignStatus.STOPPED):
+            campaign.status = CampaignStatus.COMPLETED
+            campaign.completed_at = datetime.now(timezone.utc)
+            db.commit()
+            log_activity(db, "campaign_completed", f"Campaign {campaign.name} completed", "campaign", campaign.id)
+
+    except Exception as e:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            campaign.status = CampaignStatus.FAILED
+            campaign.error_message = str(e)
+            campaign.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        log_activity(db, "campaign_failed", f"Campaign failed: {str(e)}", "campaign", campaign_id, level="error")
+    finally:
+        for client in clients.values():
+            await client.disconnect()
+        db.close()
+
+
+async def update_follow_up_leads():
+    db = SessionLocal()
+    try:
+        campaigns = db.query(Campaign).filter(Campaign.status == CampaignStatus.COMPLETED).all()
+        now = datetime.now(timezone.utc)
+        for campaign in campaigns:
+            cutoff_hours = campaign.follow_up_after_hours or 24
+            recipients = (
+                db.query(CampaignRecipient)
+                .join(Lead, CampaignRecipient.lead_id == Lead.id)
+                .filter(
+                    CampaignRecipient.campaign_id == campaign.id,
+                    CampaignRecipient.status.in_([RecipientStatus.MESSAGED, RecipientStatus.INVITED]),
+                    CampaignRecipient.reply_detected_at.is_(None),
+                    Lead.status == LeadStatus.CONTACTED,
+                )
+                .all()
+            )
+            for recipient in recipients:
+                if recipient.completed_at and (now - recipient.completed_at).total_seconds() >= cutoff_hours * 3600:
+                    recipient.status = RecipientStatus.FOLLOW_UP
+                    recipient.lead.status = LeadStatus.FOLLOW_UP
+        db.commit()
+    finally:
+        db.close()
+
+
+async def poll_recent_replies():
+    db = SessionLocal()
+    clients = []
+    try:
+        accounts = (
+            db.query(Account)
+            .filter(Account.is_active == True, Account.status == AccountStatus.ONLINE)
+            .all()
+        )
+        for account in accounts:
+            client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
+            clients.append(client)
+            await client.connect()
+            if not await client.is_user_authorized():
+                account.status = AccountStatus.UNAUTHORIZED
+                db.commit()
+                continue
+
+            async for dialog in client.iter_dialogs(limit=100):
+                message = dialog.message
+                if not message or getattr(message, "out", False):
+                    continue
+                sender_id = str(getattr(message, "sender_id", "") or "")
+                if not sender_id:
+                    continue
+
+                lead = (
+                    db.query(Lead)
+                    .filter(
+                        Lead.telegram_user_id == sender_id,
+                        Lead.status.in_([LeadStatus.CONTACTED, LeadStatus.FOLLOW_UP]),
+                    )
+                    .first()
+                )
+                if not lead:
+                    continue
+
+                lead.status = LeadStatus.GOOD_LEAD
+                recipient = (
+                    db.query(CampaignRecipient)
+                    .filter(CampaignRecipient.lead_id == lead.id)
+                    .order_by(CampaignRecipient.completed_at.desc().nullslast())
+                    .first()
+                )
+                if recipient and not recipient.reply_detected_at:
+                    recipient.status = RecipientStatus.REPLIED
+                    recipient.reply_detected_at = datetime.now(timezone.utc)
+                log_activity(db, "lead_replied", f"{lead.name or lead.telegram_user_id} replied", "lead", lead.id)
+            db.commit()
+    except Exception as e:
+        logger.warning("Reply polling failed: %s", e)
+    finally:
+        for client in clients:
+            await client.disconnect()
+        db.close()
+
+
+async def campaign_maintenance_loop():
+    while True:
+        await poll_recent_replies()
+        await update_follow_up_leads()
+        await asyncio.sleep(60)
 
 
 async def send_code_request(api_id: str, api_hash: str, phone: str):

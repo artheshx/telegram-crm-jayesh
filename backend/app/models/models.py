@@ -24,7 +24,35 @@ class LeadStatus(str, enum.Enum):
     NEW = "new"
     CONTACTED = "contacted"
     REPLIED = "replied"
+    GOOD_LEAD = "good_lead"
+    FOLLOW_UP = "follow_up"
+    FAILED = "failed"
     CLOSED = "closed"
+
+
+class CampaignStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    STOPPED = "stopped"
+
+
+class CampaignMode(str, enum.Enum):
+    DIRECT_ADD = "direct_add"
+    MESSAGE = "message"
+    INVITE_LINK = "invite_link"
+
+
+class RecipientStatus(str, enum.Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    MESSAGED = "messaged"
+    INVITED = "invited"
+    REPLIED = "replied"
+    FOLLOW_UP = "follow_up"
+    FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class Account(Base):
@@ -41,6 +69,12 @@ class Account(Base):
     last_active = Column(DateTime(timezone=True))
     last_login = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
+    hourly_message_limit = Column(Integer, default=20)
+    daily_message_limit = Column(Integer, default=100)
+    daily_invite_limit = Column(Integer, default=40)
+    messages_sent_today = Column(Integer, default=0)
+    invites_sent_today = Column(Integer, default=0)
+    counters_reset_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -121,6 +155,54 @@ class Lead(Base):
     import_date = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class Campaign(Base):
+    __tablename__ = "campaigns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    mode = Column(Enum(CampaignMode), default=CampaignMode.DIRECT_ADD)
+    status = Column(Enum(CampaignStatus), default=CampaignStatus.QUEUED)
+    target_url = Column(String)
+    message_template = Column(Text)
+    lead_status_filter = Column(String)
+    source_group_filter = Column(String)
+    account_ids = Column(Text)
+    delay_seconds = Column(Integer, default=15)
+    follow_up_after_hours = Column(Integer, default=24)
+    total_recipients = Column(Integer, default=0)
+    processed_count = Column(Integer, default=0)
+    success_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    error_message = Column(Text)
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    recipients = relationship("CampaignRecipient", back_populates="campaign")
+
+
+class CampaignRecipient(Base):
+    __tablename__ = "campaign_recipients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"))
+    lead_id = Column(Integer, ForeignKey("leads.id"))
+    account_id = Column(Integer, ForeignKey("accounts.id"))
+    status = Column(Enum(RecipientStatus), default=RecipientStatus.QUEUED)
+    message_text = Column(Text)
+    telegram_message_id = Column(String)
+    error_message = Column(Text)
+    attempted_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    reply_detected_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    campaign = relationship("Campaign", back_populates="recipients")
+    lead = relationship("Lead")
+    account = relationship("Account")
 
 
 class ActivityLog(Base):

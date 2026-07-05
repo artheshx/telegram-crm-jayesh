@@ -39,7 +39,14 @@ def list_leads(
 def count_leads(search: Optional[str] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
     q = db.query(Lead)
     if search:
-        q = q.filter(or_(Lead.name.ilike(f"%{search}%"), Lead.username.ilike(f"%{search}%")))
+        q = q.filter(
+            or_(
+                Lead.name.ilike(f"%{search}%"),
+                Lead.username.ilike(f"%{search}%"),
+                Lead.phone.ilike(f"%{search}%"),
+                Lead.telegram_user_id.ilike(f"%{search}%"),
+            )
+        )
     if status:
         q = q.filter(Lead.status == status)
     return {"count": q.count()}
