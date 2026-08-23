@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import re
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -10,6 +10,7 @@ from telethon.errors import (
 )
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.channels import InviteToChannelRequest
+from telethon.tl.functions.channels import GetParticipantRequest
 from app.db.session import SessionLocal
 from app.models.models import (
     Account,
@@ -75,9 +76,24 @@ def _select_account(db, account_ids: list[int], mode: CampaignMode):
     return None
 
 
-async def _resolve_lead_entity(client: TelegramClient, lead: Lead):
+async def _resolve_lead_entity(client: TelegramClient, lead: Lead, db):
     if lead.username:
-        return await client.get_entity(lead.username)
+        try:
+            return await client.get_entity(lead.username)
+        except Exception as e:
+            logger.warning("Failed to resolve by username @%s: %s", lead.username, e)
+
+    if lead.source_group_id:
+        from app.models.models import Group
+        group = db.query(Group).filter(Group.id == lead.source_group_id).first()
+        if group and group.url:
+            try:
+                group_entity = await client.get_entity(group.url)
+                participant = await client(GetParticipantRequest(group_entity, int(lead.telegram_user_id)))
+                return participant.user
+            except Exception as e:
+                logger.warning("Could not resolve user %s via group %s: %s", lead.telegram_user_id, group.url, e)
+
     return await client.get_entity(int(lead.telegram_user_id))
 
 
@@ -152,7 +168,7 @@ async def run_campaign(campaign_id: int):
                     if not target:
                         target = await client.get_entity(campaign.target_url)
                         target_entity_cache[account.id] = target
-                    user_entity = await _resolve_lead_entity(client, lead)
+                    user_entity = await _resolve_lead_entity(client, lead, db)
                     await client(InviteToChannelRequest(target, [user_entity]))
                     recipient.status = RecipientStatus.INVITED
                     lead.status = LeadStatus.CONTACTED
@@ -165,7 +181,7 @@ async def run_campaign(campaign_id: int):
                         message = f"{message}\n\n{campaign.target_url}".strip()
                     if not message:
                         raise ValueError("Message text is required")
-                    user_entity = await _resolve_lead_entity(client, lead)
+                    user_entity = await _resolve_lead_entity(client, lead, db)
                     sent = await client.send_message(user_entity, message)
                     recipient.status = RecipientStatus.MESSAGED
                     recipient.message_text = message
@@ -178,12 +194,20 @@ async def run_campaign(campaign_id: int):
                 account.last_active = datetime.now(timezone.utc)
 
             except FloodWaitError as e:
-                account.status = AccountStatus.FLOOD_WAIT
-                recipient.status = RecipientStatus.FAILED
-                recipient.error_message = f"Flood wait: {e.seconds}s"
-                recipient.completed_at = datetime.now(timezone.utc)
-                campaign.failed_count += 1
-                log_activity(db, "campaign_flood_wait", f"Flood wait on {account.phone_number}: {e.seconds}s", "account", account.id, level="error")
+                if e.seconds <= 60:
+                    logger.info("Short flood wait of %d seconds. Sleeping and retrying...", e.seconds)
+                    await asyncio.sleep(e.seconds)
+                    recipient.status = RecipientStatus.QUEUED
+                    db.commit()
+                    continue
+                else:
+                    account.status = AccountStatus.FLOOD_WAIT
+                    recipient.status = RecipientStatus.FAILED
+                    recipient.error_message = f"Flood wait: {e.seconds}s"
+                    recipient.completed_at = datetime.now(timezone.utc)
+                    campaign.failed_count += 1
+                    db.commit()
+                    log_activity(db, "campaign_flood_wait", f"Flood wait on {account.phone_number}: {e.seconds}s", "account", account.id, level="error")
             except Exception as e:
                 recipient.status = RecipientStatus.FAILED
                 recipient.error_message = str(e)
