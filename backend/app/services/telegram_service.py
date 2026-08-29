@@ -105,24 +105,80 @@ def _select_account(db, account_ids: list[int], mode: CampaignMode):
 
 
 async def _resolve_lead_entity(client: TelegramClient, lead: Lead, db):
+    # 1. Resolve by username (publicly resolvable by any account)
     if lead.username:
         try:
             return await client.get_entity(lead.username)
         except Exception as e:
             logger.warning("Failed to resolve by username @%s: %s", lead.username, e)
 
+    # 2. Resolve by phone number (by importing contact)
+    if lead.phone:
+        try:
+            phone = lead.phone.strip()
+            if not phone.startswith('+') and phone.isdigit():
+                phone = f"+{phone}"
+            
+            # Try to get entity directly first
+            try:
+                return await client.get_entity(phone)
+            except Exception:
+                # Fallback: import contact to cache entity
+                from telethon.tl.functions.contacts import ImportContactsRequest
+                from telethon.tl.types import InputPhoneContact
+                
+                contact = InputPhoneContact(client_id=0, phone=phone, first_name=lead.name or "Lead", last_name="")
+                result = await client(ImportContactsRequest([contact]))
+                if result and result.users:
+                    user_entity = result.users[0]
+                    # Delete the contact afterwards to keep the account's contact list clean
+                    try:
+                        from telethon.tl.functions.contacts import DeleteContactsRequest
+                        await client(DeleteContactsRequest(id=[user_entity.id]))
+                    except Exception as de:
+                        logger.warning("Failed to delete imported contact for %s: %s", phone, de)
+                    return user_entity
+        except Exception as e:
+            logger.warning("Failed to resolve by phone %s: %s", lead.phone, e)
+
+    # 3. Resolve by source group (if scraped from a group)
     if lead.source_group_id:
         from app.models.models import Group
         group = db.query(Group).filter(Group.id == lead.source_group_id).first()
         if group and group.url:
             try:
                 group_entity = await client.get_entity(group.url)
-                participant = await client(GetParticipantRequest(group_entity, int(lead.telegram_user_id)))
-                return participant.user
+                
+                # Try direct participant request (works if already cached)
+                try:
+                    participant = await client(GetParticipantRequest(group_entity, int(lead.telegram_user_id)))
+                    return participant.user
+                except Exception:
+                    pass
+                
+                # Search for user in group participants (forces Telethon to cache the entity)
+                search_queries = []
+                if lead.username:
+                    search_queries.append(lead.username)
+                if lead.name:
+                    search_queries.append(lead.name)
+                
+                for q in search_queries:
+                    if q:
+                        async for user in client.iter_participants(group_entity, search=q):
+                            if str(user.id) == str(lead.telegram_user_id):
+                                return user
+                
+                # Last resort: iterate the first 500 participants of the group
+                async for user in client.iter_participants(group_entity, limit=500):
+                    if str(user.id) == str(lead.telegram_user_id):
+                        return user
             except Exception as e:
                 logger.warning("Could not resolve user %s via group %s: %s", lead.telegram_user_id, group.url, e)
 
+    # 4. Fallback to raw ID resolution (works only if already cached in session)
     return await client.get_entity(int(lead.telegram_user_id))
+
 
 
 async def run_campaign(campaign_id: int):
