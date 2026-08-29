@@ -33,6 +33,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Global registry to hold active client connections to avoid MTProto key conflicts
+active_clients = {}
+active_clients_lock = asyncio.Lock()
+
+async def get_telegram_client(account) -> TelegramClient:
+    async with active_clients_lock:
+        if account.id in active_clients:
+            client, old_session = active_clients[account.id]
+            if old_session == account.session_string:
+                try:
+                    if not client.is_connected():
+                        await client.connect()
+                    return client
+                except Exception as e:
+                    logger.warning("Cached client connection failed, will recreate: %s", e)
+            
+            # Session string has changed, or connection check failed; close old client
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            active_clients.pop(account.id, None)
+
+        client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
+        await client.connect()
+        active_clients[account.id] = (client, account.session_string)
+        return client
+
 
 def _render_message(template: str, lead: Lead, target_url: str = None) -> str:
     text = template or ""
@@ -99,7 +127,6 @@ async def _resolve_lead_entity(client: TelegramClient, lead: Lead, db):
 
 async def run_campaign(campaign_id: int):
     db = SessionLocal()
-    clients = {}
 
     try:
         campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
@@ -150,15 +177,20 @@ async def run_campaign(campaign_id: int):
             recipient.attempted_at = datetime.now(timezone.utc)
             db.commit()
 
-            client = clients.get(account.id)
-            if not client:
-                client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
-                await client.connect()
+            try:
+                client = await get_telegram_client(account)
                 if not await client.is_user_authorized():
                     account.status = AccountStatus.UNAUTHORIZED
                     db.commit()
                     raise Exception(f"Account {account.phone_number} is not authorized")
-                clients[account.id] = client
+            except Exception as e:
+                recipient.status = RecipientStatus.FAILED
+                recipient.error_message = f"Connection failed: {str(e)}"
+                recipient.completed_at = datetime.now(timezone.utc)
+                campaign.failed_count += 1
+                campaign.processed_count += 1
+                db.commit()
+                continue
 
             try:
                 if campaign.mode == CampaignMode.DIRECT_ADD:
@@ -235,8 +267,6 @@ async def run_campaign(campaign_id: int):
             db.commit()
         log_activity(db, "campaign_failed", f"Campaign failed: {str(e)}", "campaign", campaign_id, level="error")
     finally:
-        for client in clients.values():
-            await client.disconnect()
         db.close()
 
 
@@ -269,7 +299,6 @@ async def update_follow_up_leads():
 
 async def poll_recent_replies():
     db = SessionLocal()
-    clients = []
     try:
         accounts = (
             db.query(Account)
@@ -277,50 +306,51 @@ async def poll_recent_replies():
             .all()
         )
         for account in accounts:
-            client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
-            clients.append(client)
-            await client.connect()
-            if not await client.is_user_authorized():
-                account.status = AccountStatus.UNAUTHORIZED
-                db.commit()
-                continue
-
-            async for dialog in client.iter_dialogs(limit=100):
-                message = dialog.message
-                if not message or getattr(message, "out", False):
-                    continue
-                sender_id = str(getattr(message, "sender_id", "") or "")
-                if not sender_id:
+            try:
+                client = await get_telegram_client(account)
+                if not await client.is_user_authorized():
+                    account.status = AccountStatus.UNAUTHORIZED
+                    db.commit()
                     continue
 
-                lead = (
-                    db.query(Lead)
-                    .filter(
-                        Lead.telegram_user_id == sender_id,
-                        Lead.status.in_([LeadStatus.CONTACTED, LeadStatus.FOLLOW_UP]),
+                async for dialog in client.iter_dialogs(limit=100):
+                    if not dialog.is_user:
+                        continue
+                    message = dialog.message
+                    if not message or getattr(message, "out", False):
+                        continue
+                    sender_id = str(getattr(message, "sender_id", "") or "")
+                    if not sender_id:
+                        continue
+
+                    lead = (
+                        db.query(Lead)
+                        .filter(
+                            Lead.telegram_user_id == sender_id,
+                            Lead.status.in_([LeadStatus.CONTACTED, LeadStatus.FOLLOW_UP]),
+                        )
+                        .first()
                     )
-                    .first()
-                )
-                if not lead:
-                    continue
+                    if not lead:
+                        continue
 
-                lead.status = LeadStatus.GOOD_LEAD
-                recipient = (
-                    db.query(CampaignRecipient)
-                    .filter(CampaignRecipient.lead_id == lead.id)
-                    .order_by(CampaignRecipient.completed_at.desc().nullslast())
-                    .first()
-                )
-                if recipient and not recipient.reply_detected_at:
-                    recipient.status = RecipientStatus.REPLIED
-                    recipient.reply_detected_at = datetime.now(timezone.utc)
-                log_activity(db, "lead_replied", f"{lead.name or lead.telegram_user_id} replied", "lead", lead.id)
-            db.commit()
+                    lead.status = LeadStatus.GOOD_LEAD
+                    recipient = (
+                        db.query(CampaignRecipient)
+                        .filter(CampaignRecipient.lead_id == lead.id)
+                        .order_by(CampaignRecipient.completed_at.desc().nullslast())
+                        .first()
+                    )
+                    if recipient and not recipient.reply_detected_at:
+                        recipient.status = RecipientStatus.REPLIED
+                        recipient.reply_detected_at = datetime.now(timezone.utc)
+                    log_activity(db, "lead_replied", f"{lead.name or lead.telegram_user_id} replied", "lead", lead.id)
+                db.commit()
+            except Exception as e:
+                logger.warning("Reply polling failed for account %s: %s", account.phone_number, e)
     except Exception as e:
-        logger.warning("Reply polling failed: %s", e)
+        logger.warning("Reply polling database or general failure: %s", e)
     finally:
-        for client in clients:
-            await client.disconnect()
         db.close()
 
 
@@ -393,7 +423,6 @@ async def sign_in_with_code(
 async def scrape_group(job_id: int):
     """Main scraping task - runs as background task."""
     db = SessionLocal()
-    client = None
 
     try:
         job = db.query(ScrapingJob).filter(ScrapingJob.id == job_id).first()
@@ -414,8 +443,7 @@ async def scrape_group(job_id: int):
         job.current_step = "Connecting to Telegram"
         db.commit()
 
-        client = TelegramClient(StringSession(account.session_string), int(account.api_id), account.api_hash)
-        await client.connect()
+        client = await get_telegram_client(account)
         if not await client.is_user_authorized():
             raise Exception("Account not authorized")
 
@@ -424,12 +452,12 @@ async def scrape_group(job_id: int):
 
         entity = await client.get_entity(group.url)
         full = await client(GetFullChannelRequest(entity))
-        total = full.full_chat.participants_count
+        total = full.full_chat.participants_count or 0
 
         group.telegram_id = str(getattr(entity, "id", "")) or group.telegram_id
         group.name = getattr(entity, "title", None) or group.name
         group.username = getattr(entity, "username", None) or group.username
-        group.member_count = total or 0
+        group.member_count = total
 
         job.current_step = "Scraping members"
         db.commit()
@@ -438,14 +466,20 @@ async def scrape_group(job_id: int):
         duplicates = 0
         processed = 0
 
+        # Optimization: cache existing lead user IDs in memory to avoid 1 DB query per participant
+        existing_lead_ids = set(
+            row[0] for row in db.query(Lead.telegram_user_id).filter(Lead.telegram_user_id.isnot(None)).all()
+        )
+
         async for user in client.iter_participants(entity):
-            db.refresh(job)
+            # Batch checks on job status to avoid db request bottleneck
+            if processed % 50 == 0:
+                db.refresh(job)
             if job.status == JobStatus.STOPPED:
                 break
             processed += 1
 
-            existing = db.query(Lead).filter(Lead.telegram_user_id == str(user.id)).first()
-            if existing:
+            if str(user.id) in existing_lead_ids:
                 duplicates += 1
             else:
                 lead = Lead(
@@ -459,6 +493,7 @@ async def scrape_group(job_id: int):
                     status=LeadStatus.NEW,
                 )
                 db.add(lead)
+                existing_lead_ids.add(str(user.id))
                 members_saved += 1
 
             job.members_processed = processed
@@ -517,8 +552,6 @@ async def scrape_group(job_id: int):
             db.commit()
         log_activity(db, "error", f"Scraping failed: {str(e)}", "job", job_id, level="error")
     finally:
-        if client:
-            await client.disconnect()
         db.close()
 
 

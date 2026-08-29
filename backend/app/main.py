@@ -15,14 +15,22 @@ def apply_compat_migrations():
     if engine.dialect.name != "postgresql":
         return
 
-    with engine.begin() as conn:
+    # Check if leadstatus type exists
+    with engine.connect() as conn:
         lead_status_exists = conn.exec_driver_sql("SELECT to_regtype('leadstatus')").scalar()
-        if lead_status_exists:
+
+    if lead_status_exists:
+        # Run ALTER TYPE ADD VALUE in autocommit mode outside a transaction
+        with engine.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
             for value in ("good_lead", "follow_up", "failed"):
                 conn.exec_driver_sql(f"ALTER TYPE leadstatus ADD VALUE IF NOT EXISTS '{value}'")
 
+    with engine.connect() as conn:
         accounts_exists = conn.exec_driver_sql("SELECT to_regclass('accounts')").scalar()
-        if accounts_exists:
+
+    if accounts_exists:
+        with engine.begin() as conn:
             account_columns = [
                 ("hourly_message_limit", "INTEGER DEFAULT 20"),
                 ("daily_message_limit", "INTEGER DEFAULT 100"),
@@ -51,6 +59,8 @@ app = FastAPI(
     version="1.0.0",
     description="Multi-account Telegram CRM for lead management and group scraping",
     lifespan=lifespan,
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc",
 )
 
 app.add_middleware(

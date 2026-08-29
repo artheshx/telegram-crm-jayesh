@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from app.db.session import get_db
@@ -24,7 +24,7 @@ def list_accounts(db: Session = Depends(get_db)):
 
 @router.post("/send-otp")
 async def send_otp(data: AccountCreate, db: Session = Depends(get_db)):
-    existing = db.query(Account).filter(Account.phone_number == data.phone_number).first()
+    existing = db.query(Account).filter(Account.phone_number == data.phone_number, Account.is_active == True).first()
     if existing:
         raise HTTPException(status_code=400, detail="Phone number already registered")
 
@@ -72,19 +72,32 @@ async def verify_otp(data: AccountOTPVerify, db: Session = Depends(get_db)):
             session_data["login_session_string"],
         )
 
-        account = Account(
-            phone_number=data.phone_number,
-            name=f"{me.first_name or ''} {me.last_name or ''}".strip(),
-            username=me.username,
-            api_id=session_data["api_id"],
-            api_hash=session_data["api_hash"],
-            session_string=session_string,
-            status=AccountStatus.ONLINE,
-            last_login=datetime.now(timezone.utc),
-            last_active=datetime.now(timezone.utc),
-        )
+        # Check if the account already exists (was soft-deleted)
+        account = db.query(Account).filter(Account.phone_number == data.phone_number).first()
+        if account:
+            account.is_active = True
+            account.name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            account.username = me.username
+            account.api_id = session_data["api_id"]
+            account.api_hash = session_data["api_hash"]
+            account.session_string = session_string
+            account.status = AccountStatus.ONLINE
+            account.last_login = datetime.now(timezone.utc)
+            account.last_active = datetime.now(timezone.utc)
+        else:
+            account = Account(
+                phone_number=data.phone_number,
+                name=f"{me.first_name or ''} {me.last_name or ''}".strip(),
+                username=me.username,
+                api_id=session_data["api_id"],
+                api_hash=session_data["api_hash"],
+                session_string=session_string,
+                status=AccountStatus.ONLINE,
+                last_login=datetime.now(timezone.utc),
+                last_active=datetime.now(timezone.utc),
+            )
+            db.add(account)
 
-        db.add(account)
         db.commit()
         db.refresh(account)
 
